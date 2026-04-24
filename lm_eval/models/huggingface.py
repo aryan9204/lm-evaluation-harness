@@ -55,6 +55,56 @@ if TYPE_CHECKING:
 eval_logger = logging.getLogger(__name__)
 TOKENIZER_INFINITY = 1000000000000000019884624838656
 
+def clean_output(text):
+    text = text.replace("Ġ", " ").replace("Ċ", "\n")
+    # text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # text = re.sub(r"^.*?(?=def\s)", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
+def extract_function(text):
+    lines = text.split("\n")
+
+    candidates = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Look for function definition
+        if line.startswith("def "):
+            func_lines = [line]
+            i += 1
+
+            # Collect indented body
+            while i < len(lines):
+                next_line = lines[i]
+
+                # Blank lines are fine
+                if next_line.strip() == "":
+                    func_lines.append(next_line)
+                    i += 1
+                    continue
+
+                # Must be indented to be part of function
+                if next_line.startswith((" ", "\t")):
+                    func_lines.append(next_line)
+                    i += 1
+                else:
+                    break
+
+            # Only keep if it actually has a body (not just signature)
+            if len(func_lines) > 1:
+                candidates.append("\n".join(func_lines))
+        else:
+            i += 1
+
+    # Return the LAST valid function (usually the real one)
+    if candidates:
+        return candidates[-1].strip()
+
+    return text.strip()
+
 
 @register_model("hf-auto", "hf", "huggingface")
 class HFLM(TemplateLM):
@@ -1048,7 +1098,10 @@ class HFLM(TemplateLM):
         return encoding["input_ids"], encoding["attention_mask"]
 
     def tok_decode(self, tokens: Iterator[list[str]], skip_special_tokens: bool = True):
-        return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
+        outputs = self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
+        outputs = clean_output(outputs)
+        outputs = extract_function(outputs)
+        return outputs
 
     def _model_call(
         self,
